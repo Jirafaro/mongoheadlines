@@ -1,31 +1,86 @@
-require('dotenv').config();
+// Dependencies
+var express = require('express');
+var mongojs = require('mongojs');
+// Require axios and cheerio. This makes the scraping possible
+var axios = require('axios');
+var cheerio = require('cheerio');
 
-const path = require('path');
-const express = require('express');
-const mongoose = require('mongoose');
-const app = express();
+// Initialize Express
+var app = express();
 
-const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI;
+// Database configuration
+var databaseUrl = 'scraper';
+var collections = ['scrapedData'];
 
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static('client/build'));
+// Hook mongojs configuration to the db variable
+var db = mongojs(databaseUrl, collections);
+db.on('error', function(error) {
+  console.log('Database Error:', error);
+});
 
-  app.get('*', (req, res) => {
-    res.sendFile(path.resolve(__dirname, 'client', 'build', 'index.html'));
+// Main route (simple Hello World Message)
+app.get('/', function(req, res) {
+  res.send('Hello world');
+});
+
+// Retrieve data from the db
+app.get('/all', function(req, res) {
+  // Find all results from the scrapedData collection in the db
+  db.scrapedData.find({}, function(error, found) {
+    // Throw any errors to the console
+    if (error) {
+      console.log(error);
+    }
+    // If there are no errors, send the data to the browser as json
+    else {
+      res.json(found);
+    }
   });
-}
+});
 
-mongoose
-  .connect(MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-  })
-  .then(() => {
-    console.log('mongodb connected');
-  })
-  .catch(error => console.log(error));
+// Scrape data from one site and place it into the mongodb db
+app.get('/scrape', function(req, res) {
+  // Make a request via axios for the news section of `ycombinator`
+  axios.get('https://news.ycombinator.com/').then(function(response) {
+    // Load the html body from axios into cheerio
+    var $ = cheerio.load(response.data);
+    // For each element with a "title" class
+    $('.title').each(function(i, element) {
+      // Save the text and href of each link enclosed in the current element
+      var title = $(element)
+        .children('a')
+        .text();
+      var link = $(element)
+        .children('a')
+        .attr('href');
 
-app.listen(PORT, () => {
-  console.log(`server running on PORT ${PORT}`);
+      // If this found element had both a title and a link
+      if (title && link) {
+        // Insert the data in the scrapedData db
+        db.scrapedData.insert(
+          {
+            title: title,
+            link: link
+          },
+          function(err, inserted) {
+            if (err) {
+              // Log the error if one is encountered during the query
+              console.log(err);
+            } else {
+              // Otherwise, log the inserted data
+              console.log(inserted);
+            }
+          }
+        );
+      }
+    });
+  });
+
+  // Send a "Scrape Complete" message to the browser
+  res.send('Scrape Complete');
+});
+
+// Listen on port 3000
+app.listen(3000, function() {
+  console.log('App running on port 3000!');
 });
